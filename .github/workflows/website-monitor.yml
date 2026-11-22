@@ -1,0 +1,64 @@
+name: Vimta daily website monitor
+
+on:
+  schedule:
+    # 03:47 UTC = 09:17 IST. GitHub schedules may be delayed.
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run checks or generate reference screenshots for review
+        type: choice
+        options: [check, baseline]
+        default: check
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vimta-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: monitoring
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: monitoring/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Check public website
+        if: inputs.mode != 'baseline'
+        run: npm run check
+      - name: Generate candidate reference screenshots
+        if: inputs.mode == 'baseline'
+        env:
+          CREATE_BASELINES: '1'
+        run: npm run baseline
+      - name: Save reports and evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vimta-monitor-${{ github.run_number }}
+          path: |
+            monitoring/playwright-report/
+            monitoring/test-results/
+          retention-days: 14
+      - name: Save candidate reference screenshots
+        if: inputs.mode == 'baseline' && success()
+        uses: actions/upload-artifact@v5
+        with:
+          name: candidate-baselines
+          path: monitoring/checks/baselines/
+          retention-days: 14
+      - name: Write run summary
+        if: always()
+        run: node summary.mjs
